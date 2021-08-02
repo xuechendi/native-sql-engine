@@ -210,11 +210,31 @@ case class ColumnarArrowEvalPythonExec(udfs: Seq[PythonUDF], resultAttrs: Seq[At
     "numInputBatches" -> SQLMetrics.createMetric(sparkContext, "input_batches"),
     "processTime" -> SQLMetrics.createTimingMetric(sparkContext, "totaltime_arrow_udf"))
   
+  buildCheck()
+
   private val batchSize = conf.arrowMaxRecordsPerBatch
   private val sessionLocalTimeZone = conf.sessionLocalTimeZone
   private val pythonRunnerConf = ArrowUtils.getPythonRunnerConfMap(conf)
 
   override def supportsColumnar = true
+
+  def buildCheck(): Unit = {
+    val (pyFuncs, inputs) = udfs.map(collectFunctions).unzip
+    val allInputs = new ArrayBuffer[Expression]
+    val dataTypes = new ArrayBuffer[DataType]
+    val argOffsets = inputs.map { input =>
+      input.map { e =>
+        if (allInputs.exists(_.semanticEquals(e))) {
+          allInputs.indexWhere(_.semanticEquals(e))
+        } else {
+          allInputs += e
+          dataTypes += e.dataType
+          allInputs.length - 1
+        }
+      }.toArray
+    }.toArray
+    ColumnarProjection.buildCheck(child.output, allInputs.toSeq)
+  }
   
   protected def evaluate(
       funcs: Seq[ChainedPythonFunctions],
